@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>On-prem encryption → Lakebase serving (PCI DSS 4.0 aligned)</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #f8fafc;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
+    padding: 36px 32px 32px 32px;
+    color: #0f172a;
+  }
+  .container { max-width: 1520px; margin: 0 auto; }
+  .title { font-size: 26px; font-weight: 700; margin-bottom: 4px; color: #0f172a; }
+  .subtitle { font-size: 14px; color: #64748b; margin-bottom: 28px; }
+
+  /* Two-zone canvas */
+  .zones {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    background: white;
+    border-radius: 14px;
+    border: 1px solid #e2e8f0;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .zone {
+    padding: 20px 22px 24px 22px;
+    position: relative;
+  }
+  .zone-onprem {
+    background: linear-gradient(180deg, #fef9f3 0%, #fffaf3 100%);
+    border-right: 2px dashed #cbd5e1;
+  }
+  .zone-cloud {
+    background: linear-gradient(180deg, #f0f7ff 0%, #f5faff 100%);
+  }
+  .zone-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .zone-title {
+    font-size: 14px; font-weight: 700; letter-spacing: 0.4px;
+    text-transform: uppercase;
+  }
+  .zone-onprem .zone-title { color: #b45309; }
+  .zone-cloud  .zone-title { color: #0369a1; }
+  .zone-pill {
+    font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+  }
+  .pill-pci { background: #fef3c7; color: #78350f; border: 1px solid #fcd34d; }
+  .pill-out { background: #dcfce7; color: #14532d; border: 1px solid #86efac; }
+
+  /* Step nodes */
+  .node {
+    background: white;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 8px 0;
+    display: flex; align-items: flex-start; gap: 12px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  }
+  .node .icon {
+    width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700;
+  }
+  .node .body { flex: 1; min-width: 0; }
+  .node .name { font-size: 13.5px; font-weight: 700; margin-bottom: 3px; color: #0f172a; }
+  .node .desc { font-size: 11.5px; color: #64748b; line-height: 1.45; }
+  .node .ctrl {
+    margin-top: 7px; display: inline-block;
+    background: #eef2ff; color: #3730a3;
+    border: 1px solid #c7d2fe;
+    font-family: 'JetBrains Mono', monospace; font-size: 10.5px; font-weight: 600;
+    padding: 2px 7px; border-radius: 5px;
+  }
+  .node-source .icon  { background: #fef3c7; color: #92400e; }
+  .node-encrypt .icon { background: #dcfce7; color: #166534; }
+  .node-hsm .icon     { background: #fee2e2; color: #991b1b; }
+  .node-decrypt .icon { background: #dcfce7; color: #166534; }
+  .node-csr .icon     { background: #fef3c7; color: #92400e; }
+  .node-lakebase .icon { background: #dbeafe; color: #1e40af; }
+  .node-app .icon     { background: #dbeafe; color: #1e40af; }
+  .node-channel .icon { background: #f1f5f9; color: #475569; }
+
+  /* Arrows */
+  .arrow {
+    margin: 4px 0 4px 22px;
+    padding-left: 14px;
+    border-left: 2px solid #cbd5e1;
+    font-size: 11px; color: #475569; font-style: italic;
+    position: relative; padding-bottom: 2px;
+  }
+  .arrow::before {
+    content: '▼'; position: absolute; left: -7px; bottom: -2px;
+    color: #94a3b8; font-size: 10px;
+  }
+  .arrow-up::before { content: '▲'; bottom: auto; top: -2px; }
+
+  /* Cross-boundary arrows (between zones) */
+  .crossings {
+    margin-top: 18px;
+    background: #ffffff;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    padding: 18px 22px;
+  }
+  .crossings h3 {
+    margin: 0 0 12px 0; font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.4px; color: #475569;
+  }
+  .cross-row {
+    display: grid; grid-template-columns: 22% 1fr 22%; align-items: center;
+    margin: 8px 0; font-size: 12.5px;
+  }
+  .cross-end {
+    text-align: center; font-weight: 700; font-size: 12px;
+    padding: 6px 10px; border-radius: 6px;
+  }
+  .cross-end.onprem { background: #fef3c7; color: #78350f; }
+  .cross-end.cloud  { background: #dbeafe; color: #1e40af; }
+  .cross-arrow {
+    text-align: center; padding: 0 14px;
+    color: #1f2937;
+    position: relative;
+  }
+  .cross-arrow .label {
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 999px;
+    padding: 4px 12px; font-size: 11.5px; font-weight: 600; display: inline-block;
+  }
+  .cross-arrow .label.allow { background: #dcfce7; border-color: #86efac; color: #166534; }
+  .cross-arrow .label.block { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
+  .cross-arrow .stem {
+    height: 2px; background: #cbd5e1; position: relative;
+    margin: 6px 0;
+  }
+  .cross-arrow .stem.right::after,
+  .cross-arrow .stem.left::after {
+    content: ''; position: absolute; top: -4px;
+    border: 5px solid transparent;
+  }
+  .cross-arrow .stem.right::after { right: -2px; border-left-color: #94a3b8; }
+  .cross-arrow .stem.left::after  { left: -2px;  border-right-color: #94a3b8; }
+  .cross-arrow .stem.block        { background: repeating-linear-gradient(90deg, #fca5a5 0 6px, transparent 6px 10px); }
+  .cross-arrow .stem.block::after { display: none; }
+
+  /* PCI table */
+  .pci-table {
+    margin-top: 24px;
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    overflow: hidden;
+  }
+  .pci-table h3 {
+    margin: 0; padding: 14px 20px; font-size: 14px; font-weight: 700;
+    background: #f8fafc; border-bottom: 1px solid #e2e8f0; color: #0f172a;
+    text-transform: uppercase; letter-spacing: 0.4px;
+  }
+  .pci-table table { width: 100%; border-collapse: collapse; }
+  .pci-table th {
+    text-align: left; padding: 10px 16px; font-size: 12px; color: #475569;
+    background: #f8fafc; border-bottom: 1px solid #e2e8f0;
+  }
+  .pci-table td {
+    padding: 10px 16px; font-size: 12.5px; border-bottom: 1px solid #f1f5f9; vertical-align: top;
+  }
+  .pci-table tr:last-child td { border-bottom: none; }
+  .pci-table th:first-child, .pci-table td:first-child {
+    width: 25%; font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #3730a3;
+  }
+  .pci-table .yes { color: #16a34a; font-weight: 700; }
+
+  .legend {
+    display: flex; gap: 16px; margin-top: 14px; flex-wrap: wrap;
+    font-size: 11.5px; color: #475569;
+  }
+  .legend .swatch {
+    display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="title">On-prem encryption → Lakebase serving</div>
+    <div class="subtitle">
+      Sensitive PAN / PII is encrypted (AES-GCM) or HMAC-hashed inside the on-prem PCI zone.
+      Only ciphertext crosses the boundary. The CMK never leaves the on-prem HSM,
+      so the cloud is out of PCI&nbsp;DSS&nbsp;§&nbsp;3.5 / §&nbsp;3.6 scope for those columns.
+    </div>
+
+    <div class="zones">
+      <!-- ON-PREM ZONE -->
+      <div class="zone zone-onprem">
+        <div class="zone-header">
+          <div class="zone-title">On-Prem &nbsp;·&nbsp; PCI CDE Zone</div>
+          <div class="zone-pill pill-pci">PCI DSS in-scope</div>
+        </div>
+
+        <div class="node node-source">
+          <div class="icon">1</div>
+          <div class="body">
+            <div class="name">Source system (Core banking · CRM · Card issuer)</div>
+            <div class="desc">Holds plaintext PAN, customer name, national ID, address.</div>
+          </div>
+        </div>
+
+        <div class="arrow">plaintext PAN / PII</div>
+
+        <div class="node node-encrypt">
+          <div class="icon">2</div>
+          <div class="body">
+            <div class="name">Encryption / Hashing service</div>
+            <div class="desc">
+              <b>HMAC-SHA256</b> for lookup-only fields ·
+              <b>AES-GCM (randomized)</b> for fields that must be readable later ·
+              <b>FPE / tokenization</b> for PAN.
+            </div>
+            <span class="ctrl">PCI § 3.5.1 · § 3.5.1.1</span>
+          </div>
+        </div>
+
+        <div class="arrow arrow-up">unwraps CEK using on-prem CMK</div>
+
+        <div class="node node-hsm">
+          <div class="icon">🔑</div>
+          <div class="body">
+            <div class="name">On-prem HSM (Thales · Entrust · nCipher)</div>
+            <div class="desc">
+              CMK never leaves the HSM. CEKs are wrapped by CMK and cached briefly in the encryption service.
+            </div>
+            <span class="ctrl">PCI § 3.6 · § 3.7</span>
+          </div>
+        </div>
+
+        <div style="height: 14px;"></div>
+
+        <div class="node node-decrypt">
+          <div class="icon">5</div>
+          <div class="body">
+            <div class="name">Decryption service (return path)</div>
+            <div class="desc">
+              Receives ciphertext from cloud · unwraps CEK from HSM · returns plaintext only inside the PCI zone.
+            </div>
+            <span class="ctrl">PCI § 3.5.1 · § 7.2</span>
+          </div>
+        </div>
+
+        <div class="arrow">plaintext stays inside CDE</div>
+
+        <div class="node node-csr">
+          <div class="icon">6</div>
+          <div class="body">
+            <div class="name">CSR / branch / call-centre app</div>
+            <div class="desc">Authorized human reads full PAN / PII inside on-prem network.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CLOUD ZONE -->
+      <div class="zone zone-cloud">
+        <div class="zone-header">
+          <div class="zone-title">Cloud &nbsp;·&nbsp; Databricks Lakebase</div>
+          <div class="zone-pill pill-out">PCI scope reduced — ciphertext only</div>
+        </div>
+
+        <div class="node node-lakebase">
+          <div class="icon">3</div>
+          <div class="body">
+            <div class="name">Lakebase (Postgres) — <code>customers</code></div>
+            <div class="desc">
+              Stores <code>pan_ct&nbsp;bytea</code>, <code>pan_hmac&nbsp;bytea</code>,
+              <code>name_ct&nbsp;bytea</code>, <code>last4&nbsp;text</code>.
+              Workspace-CMK TDE on top (defense-in-depth).
+            </div>
+            <span class="ctrl">PCI § 3.5.1 (unreadable at rest) · § 4.2 (TLS in transit)</span>
+          </div>
+        </div>
+
+        <div class="arrow">SELECT by HMAC index — returns ciphertext rows</div>
+
+        <div class="node node-app">
+          <div class="icon">4</div>
+          <div class="body">
+            <div class="name">Serving / lookup app (Databricks App, FastAPI)</div>
+            <div class="desc">
+              Computes <code>HMAC(query_PAN)</code> using a key it received from on-prem ·
+              looks up by <code>pan_hmac</code> · returns <code>pan_ct</code> back to on-prem
+              for decryption. Never holds the CMK and never sees plaintext PAN.
+            </div>
+            <span class="ctrl">PCI § 3.5.1 · § 7 · § 8 · § 10</span>
+          </div>
+        </div>
+
+        <div class="arrow">ciphertext returned to client / on-prem decrypt service</div>
+
+        <div class="node node-channel">
+          <div class="icon">📱</div>
+          <div class="body">
+            <div class="name">Customer-facing channel (mobile · web · partner API)</div>
+            <div class="desc">
+              Receives <b>last-4 only</b>, masked values, or status flags.
+              Full PAN never reaches this layer.
+            </div>
+            <span class="ctrl">PCI § 3.4 (masking)</span>
+          </div>
+        </div>
+
+        <div style="height: 14px;"></div>
+
+        <div class="node node-app" style="border: 1.5px dashed #fca5a5; background: #fef2f2;">
+          <div class="icon" style="background:#fee2e2;color:#991b1b;">⚠</div>
+          <div class="body">
+            <div class="name">Do NOT do these in the cloud zone</div>
+            <div class="desc">
+              ✗ Decrypt PAN inside the Databricks app (pulls cloud back into PCI § 3.5 / § 3.6 scope)<br>
+              ✗ Store CVV, CVV2, full track data, PIN or PIN block (PCI § 3.3.1 — never, even encrypted)<br>
+              ✗ Use plain SHA-256 of PAN (brute-forceable; PCI § 3.5.1.1 requires a keyed hash)
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cross-boundary flows -->
+    <div class="crossings">
+      <h3>What crosses the boundary</h3>
+
+      <div class="cross-row">
+        <div class="cross-end onprem">On-prem PCI zone</div>
+        <div class="cross-arrow">
+          <div class="label allow">ciphertext (AES-GCM) + HMAC + last4</div>
+          <div class="stem right"></div>
+        </div>
+        <div class="cross-end cloud">Lakebase</div>
+      </div>
+
+      <div class="cross-row">
+        <div class="cross-end onprem">On-prem PCI zone</div>
+        <div class="cross-arrow">
+          <div class="label block">CMK · CEK · plaintext PAN — never crosses</div>
+          <div class="stem block"></div>
+        </div>
+        <div class="cross-end cloud">Lakebase</div>
+      </div>
+
+      <div class="cross-row">
+        <div class="cross-end cloud">Lakebase / serving app</div>
+        <div class="cross-arrow">
+          <div class="label allow">ciphertext rows for return path</div>
+          <div class="stem left"></div>
+        </div>
+        <div class="cross-end onprem">On-prem decrypt service</div>
+      </div>
+    </div>
+
+    <!-- PCI table embedded in the same artifact -->
+    <div class="pci-table">
+      <h3>How this approach aligns with PCI DSS 4.0</h3>
+      <table>
+        <thead>
+          <tr><th>PCI DSS 4.0 control</th><th>What this architecture gives you</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>§ 3.5.1 &nbsp;PAN unreadable wherever stored</td>
+            <td><span class="yes">✓</span> Lakebase only stores <code>bytea</code> ciphertext / HMAC. Native requirement satisfied without relying on cloud TDE alone.</td>
+          </tr>
+          <tr>
+            <td>§ 3.5.1.1 &nbsp;Hashes must use a keyed cryptographic hash</td>
+            <td><span class="yes">✓</span> Use <b>HMAC-SHA256</b> (with on-prem secret pepper) — never plain SHA-256.</td>
+          </tr>
+          <tr>
+            <td>§ 3.6 &nbsp;Cryptographic key management</td>
+            <td><span class="yes">✓</span> CMK never leaves the on-prem HSM → cloud is <b>out of key-management scope</b>. Single biggest scope-reduction win.</td>
+          </tr>
+          <tr>
+            <td>§ 3.7 &nbsp;Key lifecycle &amp; rotation</td>
+            <td><span class="yes">✓</span> Rotation happens on-prem; cloud just stores re-wrapped ciphertext.</td>
+          </tr>
+          <tr>
+            <td>§ 4.2 &nbsp;Strong crypto for transmission</td>
+            <td><span class="yes">✓</span> TLS 1.2+ to Lakebase by default · Private Link / VPC peering recommended.</td>
+          </tr>
+          <tr>
+            <td>§ 7 / § 8 &nbsp;Least-privilege access to PAN</td>
+            <td><span class="yes">✓</span> Even a cloud DBA querying the table sees ciphertext only; no Lakebase role can recover PAN.</td>
+          </tr>
+          <tr>
+            <td>§ 3.3.1 &nbsp;Sensitive auth data must not be stored post-auth</td>
+            <td><span class="yes">✓</span> CVV / CVV2 / track / PIN never leave on-prem; never written to Lakebase.</td>
+          </tr>
+          <tr>
+            <td>§ 10 &nbsp;Audit trail of access</td>
+            <td><span class="yes">✓</span> Lakebase Postgres audit logs + Databricks workspace audit logs + on-prem decrypt-service logs.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="legend">
+      <div><span class="swatch" style="background:#fef9f3;border:1px solid #fcd34d;"></span>On-prem PCI Cardholder Data Environment</div>
+      <div><span class="swatch" style="background:#f0f7ff;border:1px solid #bae6fd;"></span>Cloud zone (PCI scope-reduced)</div>
+      <div><span class="swatch" style="background:#dcfce7;border:1px solid #86efac;"></span>Allowed across boundary</div>
+      <div><span class="swatch" style="background:#fee2e2;border:1px solid #fca5a5;"></span>Never crosses boundary</div>
+    </div>
+  </div>
+</body>
+</html>

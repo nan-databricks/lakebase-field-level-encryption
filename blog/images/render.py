@@ -5,9 +5,10 @@ from pathlib import Path
 HERE = Path(__file__).parent
 
 PAGES = [
-    ("comparison.html",         "comparison.png",         1600, 1100),
-    ("bypass.html",             "bypass.png",             1300, 900),
-    ("at_rest_vs_column.html",  "at_rest_vs_column.png",  1500, 1300),
+    ("comparison.html",                 "comparison.png",                 1600, 1100),
+    ("bypass.html",                     "bypass.png",                     1300, 900),
+    ("at_rest_vs_column.html",          "at_rest_vs_column.png",          1500, 1300),
+    ("onprem_encrypt_to_lakebase.html", "onprem_encrypt_to_lakebase.png", 1600, 1700),
 ]
 
 with sync_playwright() as p:

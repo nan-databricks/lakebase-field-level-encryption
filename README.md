@@ -85,6 +85,76 @@ The script:
 
 ![Bypass attempts](blog/images/bypass.png?v=2)
 
+## On-prem encryption → Lakebase serving (recommended for PCI / PII)
+
+The pattern in the rest of this repo (`pgcrypto` + CMK + role-gated views) decrypts inside Lakebase, which is the right fit for **operational scenarios where an authorized role legitimately needs to read plaintext** (fraud console, ops tooling, customer-360 view).
+
+For **PCI cardholder data and high-sensitivity PII served to cloud workloads**, the stronger and more common bank pattern is:
+
+> **Encrypt or HMAC-hash the value on-prem before it ever reaches the cloud. The CMK never leaves the on-prem HSM.**
+
+Lakebase only ever stores `bytea` ciphertext. The cloud workload is then **out of PCI DSS § 3.5 / § 3.6 scope** for those columns — a major scope-reduction win in any QSA assessment.
+
+![On-prem encryption to Lakebase serving](blog/images/onprem_encrypt_to_lakebase.png?v=1)
+
+### How the flow maps end-to-end
+
+| # | Component | Zone | What it does |
+|---|---|---|---|
+| 1 | Source system (core banking, CRM, card issuer) | On-prem PCI CDE | Holds plaintext PAN, name, national ID |
+| 2 | Encryption / hashing service | On-prem PCI CDE | HMAC-SHA256 for lookup-only fields · AES-GCM (randomized) for fields that must be readable later · FPE / tokenization for PAN |
+| 🔑 | On-prem HSM (Thales / Entrust / nCipher) | On-prem PCI CDE | CMK never leaves; CEKs are wrapped by CMK |
+| 3 | Lakebase (Postgres) | Cloud | Stores `pan_ct bytea`, `pan_hmac bytea`, `name_ct bytea`, `last4 text` — workspace-CMK TDE on top |
+| 4 | Serving / lookup app (Databricks App, FastAPI) | Cloud | Computes `HMAC(query_PAN)`, looks up by `pan_hmac`, returns ciphertext to caller — never holds CMK, never sees plaintext |
+| 5 | Decryption service (return path) | On-prem PCI CDE | Receives ciphertext from cloud, unwraps with HSM, returns plaintext **inside the CDE only** |
+| 6 | CSR / branch / call-centre app | On-prem PCI CDE | Authorized human reads full PAN inside on-prem network |
+| 📱 | Customer-facing channel (mobile, web, partner API) | Cloud | Receives `last-4 only`, masked values, or status flags |
+
+### What crosses the boundary
+
+- **Allowed (cloud-bound):** AES-GCM ciphertext · HMAC index · `last4`
+- **Allowed (on-prem-bound):** ciphertext rows for the return path
+- **Never crosses:** CMK · CEK · plaintext PAN
+
+### How this approach aligns with PCI DSS 4.0
+
+| PCI DSS 4.0 control | What this architecture gives you |
+|---|---|
+| **§ 3.5.1** PAN unreadable wherever stored | ✅ Lakebase only stores `bytea` ciphertext / HMAC. Native requirement satisfied without relying on cloud TDE alone. |
+| **§ 3.5.1.1** Hashes must use a keyed cryptographic hash | ✅ Use **HMAC-SHA256** with on-prem secret pepper — never plain SHA-256 (PAN keyspace is brute-forceable). |
+| **§ 3.6** Cryptographic key management | ✅ CMK never leaves the on-prem HSM → cloud is **out of key-management scope**. The single biggest scope-reduction win. |
+| **§ 3.7** Key lifecycle & rotation | ✅ Rotation happens on-prem; cloud just stores re-wrapped ciphertext. |
+| **§ 4.2** Strong crypto for transmission | ✅ TLS 1.2+ to Lakebase by default · Private Link / VPC peering recommended. |
+| **§ 7 / § 8** Least-privilege access to PAN | ✅ Even a cloud DBA querying the table sees ciphertext only; no Lakebase role can recover PAN. |
+| **§ 3.3.1** Sensitive auth data must not be stored post-auth | ✅ CVV / CVV2 / track / PIN never leave on-prem; never written to Lakebase. |
+| **§ 10** Audit trail of access | ✅ Lakebase Postgres audit logs + Databricks workspace audit logs + on-prem decrypt-service logs. |
+
+### Choose the right primitive per column
+
+```
+Is this column ever shown back to a human or downstream system?
+├── No  → HMAC-SHA256 on-prem with HSM key
+│        (lookup works, value is unrecoverable)
+│
+└── Yes → Is this PAN / CVV?
+         ├── CVV / track / PIN  → DO NOT STORE
+         ├── PAN                → Tokenize on-prem (best)
+         │                         OR FPE on-prem (if PAN-shape needed downstream)
+         │                         OR AES-GCM + on-prem CEK + last4 in clear
+         └── Other PII (name,
+              email, address)   → AES-GCM (randomized) on-prem
+                                  + optional HMAC sidecar for lookup/join
+```
+
+### What to avoid in the cloud zone
+
+- ❌ Decrypt PAN inside the Databricks app — pulls cloud back into PCI § 3.5 / § 3.6 scope.
+- ❌ Store CVV, CVV2, full track data, PIN or PIN block — PCI § 3.3.1 prohibits regardless of encryption.
+- ❌ Use plain SHA-256 of PAN — brute-forceable; PCI § 3.5.1.1 requires a keyed hash.
+- ❌ Sync the on-prem CMK into AKV / KMS to make decrypt easier — undoes the entire scope-reduction benefit.
+
+The `pgcrypto` + role-gated views pattern in this repo is **complementary** to this on-prem-first design — use it for non-PCI columns where in-cloud business logic legitimately needs plaintext for an authorized role.
+
 ## How it differs from encryption-at-rest
 
 ![Encryption at rest vs column-level encryption](blog/images/at_rest_vs_column.png?v=2)
