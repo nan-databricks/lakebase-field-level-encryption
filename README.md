@@ -100,6 +100,26 @@ The script:
 
 You want **both layers** — they protect different attackers.
 
+## How this compares to TDE and SQL Server Always Encrypted
+
+A common question: "isn't this the same as SQL Server Always Encrypted?" — not quite. The three approaches differ in **where the encryption happens** and therefore **what the database server is ever allowed to see**:
+
+| | Where encrypt/decrypt runs | Server sees plaintext? | Server sees the key? | Defends against |
+|---|---|---|---|---|
+| **TDE / encryption-at-rest** <br>(Lakebase storage CMK, EBS, Azure SQL TDE) | Storage layer | **Yes**, always — disk is decrypted before the engine reads it | Yes (or KMS does it transparently) | Stolen disk / backup only |
+| **Field-level encryption + masking** <br>(this repo: pgcrypto + CMK + role-gated views) | **Server**, inside `pgp_sym_decrypt` | **Briefly**, only during the function call | Yes, only while the function executes (CMK injected via session GUC) | Stolen disk · compromised app credential · curious DBA reading rows · over-broad role grants |
+| **SQL Server Always Encrypted** | **Client driver** (.NET / JDBC / ODBC) | **Never** | Never — key lives in client-side AKV / cert store | All of the above **plus** a malicious DBA / cloud operator with full server access |
+
+**The short version:**
+
+- **TDE** → the *disk* is encrypted, but the engine and any authenticated user see plaintext.
+- **Field-level (this repo)** → the *column* is encrypted, the server briefly handles the key so it can decrypt for authorized roles. Defends against compromised credentials and curious DBAs reading raw rows. Right tool for "support agent vs fraud analyst" scenarios on Lakebase.
+- **Always Encrypted** → the *column* is encrypted, the server **never** has the key or the plaintext. Strongest threat model. Right tool when *"the cloud provider's DBA must never see this field, full stop"* is a hard requirement.
+
+The closest equivalent to Always Encrypted on Postgres is **client-side encryption** — encrypt in the application before `INSERT`, decrypt after `SELECT`. Postgres only ever sees `bytea`. Works on any Postgres including Lakebase, but loses the in-database flexibility (no views, no aggregates, no `WHERE` on encrypted columns).
+
+You can also **stack** these layers: enable TDE on the Lakebase storage layer (workspace CMK on AKV) **and** apply field-level encryption + masking on top. They protect different attackers.
+
 ## CMK from Azure Key Vault (or AWS KMS / GCP KMS)
 
 The recommended app-side bootstrap:
