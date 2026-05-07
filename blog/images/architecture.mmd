@@ -1,0 +1,51 @@
+flowchart LR
+    subgraph CLIENT["Client / Application Tier"]
+        APP["Databricks App<br/>or Notebook"]
+        BI["BI Tool<br/>(Power BI / Tableau)"]
+    end
+
+    subgraph SECRETS["Secret Store"]
+        AKV["Azure Key Vault<br/>or AWS Secrets Manager"]
+        DBSCOPE["Databricks Secret Scope<br/>(AKV / KMS backed)"]
+        AKV ==>|backs| DBSCOPE
+    end
+
+    subgraph LAKEBASE["Lakebase Postgres (Autoscaling)"]
+        direction TB
+        subgraph VAULT["vault schema"]
+            DECF["decrypt_full(ct)<br/>SECURITY DEFINER<br/>EXEC: pii_full_access"]
+            DECM["decrypt_masked(ct, strategy)<br/>SECURITY DEFINER<br/>EXEC: pii_masked"]
+        end
+        subgraph APPSCHEMA["my_app schema"]
+            BASE[("customers<br/>email_enc, ssn_enc, card_enc<br/>= bytea ciphertext")]
+            VFULL["VIEW customers_full<br/>SELECT: pii_full_access"]
+            VMASK["VIEW customers_masked<br/>SELECT: pii_masked"]
+            VFULL ==>|reads| BASE
+            VMASK ==>|reads| BASE
+            VFULL ==>|calls| DECF
+            VMASK ==>|calls| DECM
+        end
+    end
+
+    subgraph CONSUMERS["Roles"]
+        FULLROLE["pii_full_access<br/>e.g. fraud analyst"]
+        MASKROLE["pii_masked<br/>e.g. support agent"]
+    end
+
+    APP ==>|"1- fetch CMK"| DBSCOPE
+    APP ==>|"2- SET app.cmk = ..."| LAKEBASE
+    APP ==>|"3- SELECT from view"| VFULL
+    BI ==>|SELECT from view| VMASK
+
+    FULLROLE -.->|"plaintext"| APP
+    MASKROLE -.->|"a***@acme.com<br/>XXX-XX-1234"| BI
+
+    classDef cipher fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef plain fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef masked fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef vault fill:#e0e7ff,stroke:#4338ca,color:#1e1b4b
+
+    class BASE cipher
+    class VFULL plain
+    class VMASK masked
+    class DECF,DECM,AKV,DBSCOPE vault

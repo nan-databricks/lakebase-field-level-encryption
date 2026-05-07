@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Encryption at rest vs column-level encryption</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fafafa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 40px; color: #1f2937; }
+  .container { max-width: 1400px; margin: 0 auto; }
+  .title { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+  .subtitle { font-size: 14px; color: #6b7280; margin-bottom: 32px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .card { background: white; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+  .card h2 { margin: 0 0 4px 0; font-size: 18px; font-weight: 700; }
+  .card .tagline { font-size: 13px; color: #6b7280; margin-bottom: 18px; }
+  .scenario { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; margin: 8px 0; }
+  .scenario .who { font-weight: 600; font-size: 13px; color: #111827; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .scenario .who .icon { display: inline-block; width: 22px; text-align: center; }
+  .scenario .data { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; padding: 8px 10px; border-radius: 5px; }
+  .data-cipher { background: #fef3c7; color: #78350f; }
+  .data-plain { background: #fee2e2; color: #7f1d1d; font-weight: 600; }
+  .data-masked { background: #dcfce7; color: #14532d; font-weight: 600; }
+  .data-blocked { background: #f3f4f6; color: #6b7280; font-style: italic; }
+  .at-rest .scenario .who .icon { color: #d97706; }
+  .col-enc .scenario .who .icon { color: #16a34a; }
+  table.compare { width: 100%; margin-top: 24px; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; border: 1px solid #e5e7eb; }
+  table.compare th { background: #f3f4f6; text-align: left; padding: 12px 16px; font-size: 13px; color: #374151; border-bottom: 1px solid #e5e7eb; }
+  table.compare td { padding: 12px 16px; font-size: 13px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+  table.compare tr:last-child td { border-bottom: none; }
+  table.compare th:first-child, table.compare td:first-child { width: 28%; font-weight: 600; }
+  table.compare .yes { color: #16a34a; font-weight: 600; }
+  table.compare .no { color: #dc2626; font-weight: 600; }
+  table.compare .partial { color: #d97706; font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-bottom: 12px; }
+  .badge-rest { background: #fef3c7; color: #78350f; }
+  .badge-col { background: #dcfce7; color: #14532d; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="title">Encryption at rest is not the same as column-level encryption</div>
+    <div class="subtitle">Both protect against different attackers. You usually want both.</div>
+
+    <div class="grid">
+      <!-- LEFT: at-rest -->
+      <div class="card at-rest">
+        <span class="badge badge-rest">PLATFORM-MANAGED</span>
+        <h2>Encryption at rest</h2>
+        <div class="tagline">The whole disk volume is encrypted with a key managed by Databricks (or your AKV/KMS-backed CMK at the workspace level).</div>
+
+        <div class="scenario">
+          <div class="who"><span class="icon">📦</span> Attacker steals a backup file off S3 / Blob</div>
+          <div class="data data-cipher">unreadable bytes — needs the disk-level key</div>
+        </div>
+
+        <div class="scenario">
+          <div class="who"><span class="icon">👤</span> Authenticated DB user runs <code>SELECT *</code></div>
+          <div class="data data-plain">123-45-6789  · alice@acme.com  · 4111111111111111</div>
+        </div>
+
+        <div class="scenario">
+          <div class="who"><span class="icon">🔧</span> Internal DBA reads pg_dump output</div>
+          <div class="data data-plain">123-45-6789  · alice@acme.com  · 4111111111111111</div>
+        </div>
+      </div>
+
+      <!-- RIGHT: column encryption -->
+      <div class="card col-enc">
+        <span class="badge badge-col">APP-MANAGED (CMK + pgcrypto)</span>
+        <h2>Column-level encryption + masking</h2>
+        <div class="tagline">Each PII column is ciphertext in the table; only an authorized role can call the decrypt function.</div>
+
+        <div class="scenario">
+          <div class="who"><span class="icon">📦</span> Attacker steals a backup file off S3 / Blob</div>
+          <div class="data data-cipher">unreadable bytes — needs both keys</div>
+        </div>
+
+        <div class="scenario">
+          <div class="who"><span class="icon">👤</span> Authenticated DB user (pii_full_access) runs <code>SELECT *</code></div>
+          <div class="data data-plain">123-45-6789  · alice@acme.com  · 4111111111111111</div>
+        </div>
+
+        <div class="scenario">
+          <div class="who"><span class="icon">👤</span> Authenticated DB user (pii_masked) runs <code>SELECT *</code></div>
+          <div class="data data-masked">XXX-XX-6789  · a***@acme.com  · ************1111</div>
+        </div>
+
+        <div class="scenario">
+          <div class="who"><span class="icon">🔧</span> Internal DBA reads pg_dump output</div>
+          <div class="data data-cipher">\\xc30d04070302... (bytea ciphertext only)</div>
+        </div>
+      </div>
+    </div>
+
+    <table class="compare">
+      <thead>
+        <tr><th>Threat</th><th>Encryption at rest</th><th>Column-level encryption + masking</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Stolen backup / disk image</td><td class="yes">Protected</td><td class="yes">Protected</td></tr>
+        <tr><td>Compromised application credential</td><td class="no">Plaintext exposed</td><td class="partial">Only the role's view is exposed (mask or null)</td></tr>
+        <tr><td>Curious DBA reading rows</td><td class="no">Plaintext exposed</td><td class="yes">Sees ciphertext only</td></tr>
+        <tr><td>Insider exporting data via BI tool</td><td class="no">Plaintext exposed</td><td class="yes">BI role gets masked values</td></tr>
+        <tr><td>Audit / least-privilege controls</td><td class="no">Per-disk, not per-column</td><td class="yes">Per-column, per-role, per-strategy</td></tr>
+        <tr><td>Key rotation</td><td class="partial">Re-encrypts the volume</td><td class="yes">In-place row-level re-encrypt in one UPDATE</td></tr>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

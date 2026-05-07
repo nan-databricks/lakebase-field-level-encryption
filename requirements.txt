@@ -1,0 +1,3 @@
+databricks-sdk>=0.81.0
+psycopg[binary]>=3.0
+playwright>=1.40   # only needed if you want to re-render blog/images/*.png

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Lakebase SQL Editor — masked vs unmasked</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b1220; color: #e6edf3; font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace; padding: 32px; }
+  .container { max-width: 1500px; margin: 0 auto; }
+  .title { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 22px; font-weight: 600; margin-bottom: 8px; color: #f0f6fc; }
+  .subtitle { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 14px; color: #8b949e; margin-bottom: 28px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .panel { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+  .panel-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #30363d; font-family: -apple-system, sans-serif; font-size: 13px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge-full { background: #033a16; color: #4ade80; border: 1px solid #166534; }
+  .badge-mask { background: #450a0a; color: #f87171; border: 1px solid #991b1b; }
+  .badge-cipher { background: #422006; color: #fbbf24; border: 1px solid #92400e; }
+  .role { color: #58a6ff; font-family: 'JetBrains Mono', monospace; font-size: 12px; margin-left: auto; }
+  .sql { padding: 12px 14px; background: #010409; color: #c9d1d9; font-size: 12px; border-bottom: 1px solid #30363d; }
+  .sql .kw { color: #ff7b72; }
+  .sql .id { color: #79c0ff; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { background: #161b22; color: #8b949e; text-align: left; padding: 8px 12px; font-weight: 600; border-bottom: 1px solid #30363d; }
+  td { padding: 7px 12px; border-bottom: 1px solid #21262d; color: #c9d1d9; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .plain { color: #4ade80; }
+  .masked { color: #f87171; }
+  .cipher { color: #fbbf24; font-family: 'JetBrains Mono', monospace; font-size: 11px; word-break: break-all; }
+  .footer { text-align: center; margin-top: 18px; font-family: -apple-system, sans-serif; font-size: 12px; color: #6e7681; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="title">Same row, two roles, two views</div>
+    <div class="subtitle">Lakebase Postgres column masking with a customer-managed key (CMK)</div>
+
+    <div class="row">
+      <!-- LEFT: privileged role -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="badge badge-full">PII FULL ACCESS</span>
+          <span class="role">SET ROLE demo_pii_user;</span>
+        </div>
+        <div class="sql">
+          <span class="kw">SELECT</span> id, full_name, email, ssn, card_number<br>
+          <span class="kw">FROM</span> <span class="id">my_app.customers_full</span> <span class="kw">ORDER BY</span> id;
+        </div>
+        <table>
+          <thead>
+            <tr><th>id</th><th>full_name</th><th>email</th><th>ssn</th><th>card_number</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>1</td><td>Alice Anderson</td><td class="plain">alice.anderson@acme.com</td><td class="plain">123-45-6789</td><td class="plain">4111111111111111</td></tr>
+            <tr><td>2</td><td>Bob Brown</td><td class="plain">bob.brown@globex.com</td><td class="plain">987-65-4321</td><td class="plain">5500000000000004</td></tr>
+            <tr><td>3</td><td>Carol Chen</td><td class="plain">carol.chen@initech.com</td><td class="plain">555-12-3456</td><td class="plain">340000000000009</td></tr>
+            <tr><td>4</td><td>Dan Davis</td><td class="plain">dan.davis@umbrella.corp</td><td class="plain">111-22-3333</td><td class="plain">30000000000004</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- RIGHT: masked role -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="badge badge-mask">PII MASKED</span>
+          <span class="role">SET ROLE demo_masked_user;</span>
+        </div>
+        <div class="sql">
+          <span class="kw">SELECT</span> id, full_name, email, ssn, card_number<br>
+          <span class="kw">FROM</span> <span class="id">my_app.customers_masked</span> <span class="kw">ORDER BY</span> id;
+        </div>
+        <table>
+          <thead>
+            <tr><th>id</th><th>full_name</th><th>email</th><th>ssn</th><th>card_number</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>1</td><td>Alice Anderson</td><td class="masked">a***@acme.com</td><td class="masked">XXX-XX-6789</td><td class="masked">************1111</td></tr>
+            <tr><td>2</td><td>Bob Brown</td><td class="masked">b***@globex.com</td><td class="masked">XXX-XX-4321</td><td class="masked">************0004</td></tr>
+            <tr><td>3</td><td>Carol Chen</td><td class="masked">c***@initech.com</td><td class="masked">XXX-XX-3456</td><td class="masked">************0009</td></tr>
+            <tr><td>4</td><td>Dan Davis</td><td class="masked">d***@umbrella.corp</td><td class="masked">XXX-XX-3333</td><td class="masked">************0004</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="height: 24px;"></div>
+
+    <!-- BOTTOM: raw bytea -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="badge badge-cipher">RAW TABLE (admin only)</span>
+        <span class="role">-- what an attacker who steals a backup actually sees</span>
+      </div>
+      <div class="sql">
+        <span class="kw">SELECT</span> id, full_name, encode(email_enc, <span style="color:#a5d6ff">'hex'</span>) <span class="kw">AS</span> email_ciphertext<br>
+        <span class="kw">FROM</span> <span class="id">my_app.customers</span> <span class="kw">ORDER BY</span> id;
+      </div>
+      <table>
+        <thead>
+          <tr><th style="width: 60px">id</th><th style="width: 180px">full_name</th><th>email_ciphertext (bytea, hex-encoded)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td>Alice Anderson</td><td class="cipher">c30d04070302dceef7030301511464d2510a4d8f57aa8c8e5e98f5b03fb14da2c01b8e8c61d7bc7b...</td></tr>
+          <tr><td>2</td><td>Bob Brown</td><td class="cipher">c30d040703029ae85fcbbefaecf470d24f0a8d57f1c8e8e3a8b3c9d1ec7a9b5f3d2e1c4a8b7d6e5...</td></tr>
+          <tr><td>3</td><td>Carol Chen</td><td class="cipher">c30d04070302c657da3f457946f865d2520b4e8e58ac9d6f5b9a6b2c1d4e7f8a3b5c8d1e2f4a7b...</td></tr>
+          <tr><td>4</td><td>Dan Davis</td><td class="cipher">c30d04070302d54bb6cbd5e629a074d2510a4f9f59bd0e8f6c0a7c3d2e5f8b9a4c6d9e2f3a5b6...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="footer">Lakebase Bank POC v2 · ep-hidden-hat-d1sh2tk0 · databricks_postgres · my_app schema</div>
+  </div>
+</body>
+</html>

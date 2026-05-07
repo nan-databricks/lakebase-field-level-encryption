@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bypass attempts blocked</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b1220; color: #e6edf3; font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace; padding: 32px; }
+  .container { max-width: 1200px; margin: 0 auto; }
+  .title { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 22px; font-weight: 600; margin-bottom: 8px; color: #f0f6fc; }
+  .subtitle { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 14px; color: #8b949e; margin-bottom: 24px; }
+  .as { font-family: -apple-system, sans-serif; font-size: 13px; color: #58a6ff; padding: 10px 16px; background: #161b22; border: 1px solid #30363d; border-bottom: none; border-radius: 8px 8px 0 0; }
+  .as .role { color: #f87171; font-family: 'JetBrains Mono', monospace; }
+  .terminal { background: #010409; border: 1px solid #30363d; border-radius: 0 0 8px 8px; padding: 18px 22px; font-size: 13.5px; line-height: 1.85; }
+  .attempt { margin: 18px 0; }
+  .attempt:first-child { margin-top: 0; }
+  .attempt:last-child { margin-bottom: 0; }
+  .label { color: #6e7681; font-family: -apple-system, sans-serif; font-size: 12.5px; margin-bottom: 4px; }
+  .sql { color: #c9d1d9; padding-left: 20px; position: relative; }
+  .sql::before { content: '#'; position: absolute; left: 0; color: #58a6ff; }
+  .kw { color: #ff7b72; }
+  .id { color: #79c0ff; }
+  .str { color: #a5d6ff; }
+  .blocked { color: #f87171; padding-left: 20px; position: relative; margin-top: 4px; }
+  .blocked::before { content: '✗'; position: absolute; left: 0; color: #f87171; font-weight: bold; }
+  .ok { color: #4ade80; padding-left: 20px; position: relative; margin-top: 4px; }
+  .ok::before { content: '✓'; position: absolute; left: 0; color: #4ade80; font-weight: bold; }
+  .err { color: #d97757; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="title">Bypass attempts by the masked role — all blocked</div>
+    <div class="subtitle">Defense in depth: even if the attacker knows the schema, they have no path to the plaintext or the CMK.</div>
+
+    <div class="as">connected as <span class="role">demo_masked_user</span> (member of <span class="role">pii_masked</span>)</div>
+    <div class="terminal">
+
+      <div class="attempt">
+        <div class="label">Attempt 1 — try to SELECT the privileged view</div>
+        <div class="sql"><span class="kw">SELECT</span> * <span class="kw">FROM</span> <span class="id">my_app.customers_full</span> <span class="kw">LIMIT</span> 1;</div>
+        <div class="blocked">ERROR: <span class="err">permission denied for view customers_full</span></div>
+      </div>
+
+      <div class="attempt">
+        <div class="label">Attempt 2 — try to read the CMK directly</div>
+        <div class="sql"><span class="kw">SELECT</span> key_value <span class="kw">FROM</span> <span class="id">my_vault.keys</span>;</div>
+        <div class="blocked">ERROR: <span class="err">permission denied for table keys</span></div>
+      </div>
+
+      <div class="attempt">
+        <div class="label">Attempt 3 — try to call the privileged decrypt function</div>
+        <div class="sql"><span class="kw">SELECT</span> <span class="id">my_vault.decrypt_full</span>(email_enc) <span class="kw">FROM</span> <span class="id">my_app.customers</span> <span class="kw">LIMIT</span> 1;</div>
+        <div class="blocked">ERROR: <span class="err">permission denied for table customers</span></div>
+      </div>
+
+      <div class="attempt">
+        <div class="label">Attempt 4 — try pgcrypto directly with a guessed key</div>
+        <div class="sql"><span class="kw">SELECT</span> pgp_sym_decrypt(email_enc, <span class="str">'guess'</span>) <span class="kw">FROM</span> <span class="id">my_app.customers</span> <span class="kw">LIMIT</span> 1;</div>
+        <div class="blocked">ERROR: <span class="err">permission denied for table customers</span></div>
+      </div>
+
+      <div class="attempt">
+        <div class="label">Attempt 5 — what the masked role IS allowed to do</div>
+        <div class="sql"><span class="kw">SELECT</span> email <span class="kw">FROM</span> <span class="id">my_app.customers_masked</span> <span class="kw">LIMIT</span> 1;</div>
+        <div class="ok"><span style="color:#4ade80">a***@acme.com</span></div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>
