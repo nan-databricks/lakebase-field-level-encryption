@@ -31,8 +31,12 @@ It's the "second layer" on top of platform encryption-at-rest. See [the blog pos
 │   └── images/                            # architecture + screenshots
 ├── scripts/
 │   └── cmk_column_masking_demo.py         # end-to-end runnable demo
-└── sql/
-    └── setup.sql                          # paste-into-SQL-editor version
+├── sql/
+│   └── setup.sql                          # paste-into-SQL-editor version
+└── customer-pdf/
+    ├── lakebase-field-level-encryption.pdf  # 1-page customer leave-behind
+    ├── onepager.html                        # source (edit & regenerate)
+    └── render_pdf.py                        # Playwright renderer
 ```
 
 ## Quick start

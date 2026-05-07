@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Field-Level Encryption on Databricks Lakebase</title>
+<style>
+  @page {
+    size: A4;
+    margin: 14mm 12mm 14mm 12mm;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; color: #1f2937; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 9.5pt; line-height: 1.45; }
+
+  /* ------- header / brand bar ------- */
+  .brand {
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 3px solid #FF3621;
+    padding-bottom: 6px; margin-bottom: 10px;
+  }
+  .brand .left { display: flex; flex-direction: column; }
+  .brand .product { font-size: 8pt; color: #FF3621; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .brand .title { font-size: 16pt; font-weight: 700; color: #111827; margin-top: 2px; }
+  .brand .right { font-size: 8.5pt; color: #6b7280; text-align: right; }
+  .brand .right b { color: #111827; }
+
+  /* ------- top intro ------- */
+  .lede {
+    background: #f9fafb;
+    border-left: 3px solid #FF3621;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    font-size: 9.5pt;
+  }
+  .lede b { color: #111827; }
+
+  /* ------- two-column layout ------- */
+  .two-col { display: grid; grid-template-columns: 1.05fr 1fr; gap: 10px; }
+  .col h2 {
+    font-size: 10.5pt; color: #111827; margin: 4px 0 5px 0;
+    padding-bottom: 3px; border-bottom: 1px solid #e5e7eb;
+  }
+  .col h3 {
+    font-size: 9pt; color: #FF3621; margin: 8px 0 3px 0;
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700;
+  }
+  .col p, .col li { margin: 2px 0; }
+  .col ul { margin: 3px 0 6px 16px; padding: 0; }
+  .col ul li { margin-bottom: 2px; }
+
+  /* ------- diagram ------- */
+  .diagram { margin: 6px 0 10px 0; text-align: center; }
+  .diagram img { max-width: 100%; height: auto; border: 1px solid #e5e7eb; border-radius: 4px; }
+  .diagram .caption { font-size: 7.5pt; color: #6b7280; margin-top: 3px; font-style: italic; }
+
+  /* ------- code blocks ------- */
+  pre {
+    background: #0d1117; color: #c9d1d9;
+    font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    font-size: 7.4pt; line-height: 1.4;
+    padding: 8px 10px; border-radius: 4px;
+    margin: 4px 0 8px 0; overflow-x: hidden; white-space: pre-wrap;
+    page-break-inside: avoid;
+  }
+  pre .kw  { color: #ff7b72; }
+  pre .id  { color: #79c0ff; }
+  pre .str { color: #a5d6ff; }
+  pre .com { color: #8b949e; font-style: italic; }
+  pre .fn  { color: #d2a8ff; }
+
+  /* ------- output box ------- */
+  .out {
+    border: 1px solid #e5e7eb; border-radius: 4px;
+    padding: 6px 9px; font-family: 'JetBrains Mono', monospace;
+    font-size: 7.5pt; margin: 3px 0 8px 0; background: #fafafa;
+  }
+  .out .label { font-family: -apple-system, sans-serif; font-size: 7.5pt; color: #6b7280; margin-bottom: 3px; }
+  .out .plain  { color: #b91c1c; font-weight: 600; }
+  .out .masked { color: #15803d; font-weight: 600; }
+
+  /* ------- footer ------- */
+  .footer {
+    margin-top: 10px;
+    padding-top: 6px;
+    border-top: 1px solid #e5e7eb;
+    font-size: 7.5pt;
+    color: #6b7280;
+    display: flex; justify-content: space-between;
+  }
+  .footer .links a { color: #FF3621; text-decoration: none; }
+
+  .badge {
+    display: inline-block; padding: 1px 6px; font-size: 7pt; font-weight: 700;
+    border-radius: 3px; margin-right: 4px;
+    background: #fef3c7; color: #78350f; border: 1px solid #fde68a;
+  }
+  .badge.green { background: #dcfce7; color: #14532d; border-color: #bbf7d0; }
+  .badge.red   { background: #fee2e2; color: #7f1d1d; border-color: #fecaca; }
+
+  table.compact { width: 100%; border-collapse: collapse; font-size: 8pt; margin: 4px 0 8px 0; }
+  table.compact th, table.compact td { border: 1px solid #e5e7eb; padding: 4px 6px; text-align: left; vertical-align: top; }
+  table.compact th { background: #f3f4f6; font-weight: 600; color: #111827; }
+</style>
+</head>
+<body>
+
+  <!-- ============== HEADER ============== -->
+  <div class="brand">
+    <div class="left">
+      <div class="product">Databricks Lakebase · Reference Pattern</div>
+      <div class="title">Field-Level Encryption &amp; Dynamic Masking</div>
+    </div>
+    <div class="right">
+      <b>Use case:</b> Protect PII in OLTP Postgres<br>
+      <b>Components:</b> Lakebase · pgcrypto · AKV / KMS · Databricks Apps
+    </div>
+  </div>
+
+  <!-- ============== INTRO ============== -->
+  <div class="lede">
+    Encryption-at-rest only protects you against a stolen disk. Once a user authenticates, they see plaintext.
+    <b>Field-level encryption</b> stores PII as ciphertext in the table and decrypts only inside an authorized function call,
+    so a <b>customer-managed key (CMK) from Azure Key Vault / KMS</b> controls who sees what.
+    Add <b>role-based masking</b> and the same row looks completely different to a fraud analyst vs. a support agent.
+  </div>
+
+  <!-- ============== ARCHITECTURE ============== -->
+  <div class="diagram">
+    <img src="architecture.png" alt="Architecture">
+    <div class="caption">CMK lives in Azure Key Vault → fetched at session start → injected into Lakebase as a session GUC → decrypt path is gated per Postgres role</div>
+  </div>
+
+  <!-- ============== TWO COLUMNS ============== -->
+  <div class="two-col">
+
+    <!-- LEFT: setup -->
+    <div class="col">
+      <h2>1. One-time setup (Lakebase SQL Editor)</h2>
+
+      <h3>Enable pgcrypto, create vault &amp; app schemas</h3>
+<pre><span class="kw">CREATE EXTENSION IF NOT EXISTS</span> pgcrypto;
+<span class="kw">CREATE SCHEMA IF NOT EXISTS</span> my_vault;
+<span class="kw">CREATE SCHEMA IF NOT EXISTS</span> my_app;</pre>
+
+      <h3>Two SECURITY DEFINER decrypt functions</h3>
+      <p style="font-size:8pt;color:#374151">CMK is read from <code>current_setting('app.cmk')</code>, which the app sets per session from AKV. The CMK never persists in Postgres.</p>
+<pre><span class="kw">CREATE OR REPLACE FUNCTION</span> my_vault.<span class="fn">decrypt_full</span>(p_ct <span class="kw">bytea</span>)
+<span class="kw">RETURNS</span> text <span class="kw">LANGUAGE</span> plpgsql <span class="kw">SECURITY DEFINER STABLE AS</span> $$
+<span class="kw">BEGIN</span>
+  <span class="kw">RETURN</span> public.<span class="fn">pgp_sym_decrypt</span>(p_ct, current_setting(<span class="str">'app.cmk'</span>));
+<span class="kw">END</span>; $$;
+
+<span class="kw">CREATE OR REPLACE FUNCTION</span> my_vault.<span class="fn">decrypt_masked</span>(p_ct <span class="kw">bytea</span>, strategy text)
+<span class="kw">RETURNS</span> text <span class="kw">LANGUAGE</span> plpgsql <span class="kw">SECURITY DEFINER STABLE AS</span> $$
+<span class="kw">DECLARE</span> v text;
+<span class="kw">BEGIN</span>
+  v := public.<span class="fn">pgp_sym_decrypt</span>(p_ct, current_setting(<span class="str">'app.cmk'</span>));
+  <span class="kw">RETURN CASE</span> strategy
+    <span class="kw">WHEN</span> <span class="str">'email'</span> <span class="kw">THEN</span> <span class="fn">regexp_replace</span>(v, <span class="str">'(^.).*(@.*$)'</span>, <span class="str">'\1***\2'</span>)
+    <span class="kw">WHEN</span> <span class="str">'ssn'</span>   <span class="kw">THEN</span> <span class="str">'XXX-XX-'</span> || <span class="fn">right</span>(v, 4)
+    <span class="kw">WHEN</span> <span class="str">'card'</span>  <span class="kw">THEN</span> <span class="str">'************'</span> || <span class="fn">right</span>(v, 4)
+    <span class="kw">ELSE</span> <span class="str">'***REDACTED***'</span>
+  <span class="kw">END</span>;
+<span class="kw">END</span>; $$;</pre>
+
+      <h3>Roles &amp; ACLs (lock down each path)</h3>
+<pre><span class="kw">CREATE ROLE</span> pii_full_access;
+<span class="kw">CREATE ROLE</span> pii_masked;
+<span class="kw">REVOKE EXECUTE ON FUNCTION</span> my_vault.<span class="fn">decrypt_full</span>(<span class="kw">bytea</span>)         <span class="kw">FROM PUBLIC</span>;
+<span class="kw">REVOKE EXECUTE ON FUNCTION</span> my_vault.<span class="fn">decrypt_masked</span>(<span class="kw">bytea</span>, text) <span class="kw">FROM PUBLIC</span>;
+<span class="kw">GRANT EXECUTE ON FUNCTION</span> my_vault.<span class="fn">decrypt_full</span>(<span class="kw">bytea</span>)          <span class="kw">TO</span> pii_full_access;
+<span class="kw">GRANT EXECUTE ON FUNCTION</span> my_vault.<span class="fn">decrypt_masked</span>(<span class="kw">bytea</span>, text)  <span class="kw">TO</span> pii_masked;</pre>
+    </div>
+
+    <!-- RIGHT: table + views + app + output -->
+    <div class="col">
+      <h2>2. Table, role-specific views, and consuming app</h2>
+
+      <h3>Encrypted base table + two views</h3>
+<pre><span class="kw">CREATE TABLE</span> my_app.customers (
+  id              <span class="kw">bigserial PRIMARY KEY</span>,
+  full_name       text,
+  email_enc       <span class="kw">bytea NOT NULL</span>,   <span class="com">-- ciphertext on disk</span>
+  ssn_enc         <span class="kw">bytea NOT NULL</span>,
+  card_number_enc <span class="kw">bytea NOT NULL</span>
+);
+
+<span class="com">-- Insert: encrypt with the session CMK</span>
+<span class="kw">INSERT INTO</span> my_app.customers(full_name, email_enc, ssn_enc, card_number_enc)
+<span class="kw">VALUES</span> (<span class="str">'Alice'</span>,
+        <span class="fn">pgp_sym_encrypt</span>(<span class="str">'alice@acme.com'</span>,    current_setting(<span class="str">'app.cmk'</span>)),
+        <span class="fn">pgp_sym_encrypt</span>(<span class="str">'123-45-6789'</span>,       current_setting(<span class="str">'app.cmk'</span>)),
+        <span class="fn">pgp_sym_encrypt</span>(<span class="str">'4111111111111111'</span>,  current_setting(<span class="str">'app.cmk'</span>)));
+
+<span class="kw">CREATE VIEW</span> my_app.customers_full <span class="kw">AS</span>
+<span class="kw">SELECT</span> id, full_name,
+       my_vault.<span class="fn">decrypt_full</span>(email_enc)        <span class="kw">AS</span> email,
+       my_vault.<span class="fn">decrypt_full</span>(ssn_enc)          <span class="kw">AS</span> ssn,
+       my_vault.<span class="fn">decrypt_full</span>(card_number_enc)  <span class="kw">AS</span> card_number
+<span class="kw">FROM</span> my_app.customers;
+
+<span class="kw">CREATE VIEW</span> my_app.customers_masked <span class="kw">AS</span>
+<span class="kw">SELECT</span> id, full_name,
+       my_vault.<span class="fn">decrypt_masked</span>(email_enc,      <span class="str">'email'</span>) <span class="kw">AS</span> email,
+       my_vault.<span class="fn">decrypt_masked</span>(ssn_enc,        <span class="str">'ssn'</span>)   <span class="kw">AS</span> ssn,
+       my_vault.<span class="fn">decrypt_masked</span>(card_number_enc, <span class="str">'card'</span>) <span class="kw">AS</span> card_number
+<span class="kw">FROM</span> my_app.customers;
+
+<span class="kw">GRANT SELECT ON</span> my_app.customers_full   <span class="kw">TO</span> pii_full_access;
+<span class="kw">GRANT SELECT ON</span> my_app.customers_masked <span class="kw">TO</span> pii_masked;</pre>
+
+      <h3>Application bootstrap (Python · Databricks App)</h3>
+<pre><span class="kw">import</span> psycopg
+<span class="kw">from</span> databricks.sdk <span class="kw">import</span> WorkspaceClient
+
+w   = WorkspaceClient()
+cmk = w.dbutils.secrets.get(scope=<span class="str">"lakebase-cmk"</span>, key=<span class="str">"lakebase-cmk"</span>)
+ep  = w.postgres.get_endpoint(name=<span class="str">"projects/&lt;p&gt;/branches/production/endpoints/primary"</span>)
+tok = w.postgres.generate_database_credential(endpoint=ep.name).token
+
+<span class="kw">with</span> psycopg.connect(host=ep.status.hosts.host, dbname=<span class="str">"databricks_postgres"</span>,
+                     user=w.current_user.me().user_name, password=tok,
+                     sslmode=<span class="str">"require"</span>) <span class="kw">as</span> c, c.cursor() <span class="kw">as</span> cur:
+    cur.execute(<span class="str">"SELECT set_config('app.cmk', %s, false);"</span>, (cmk,))
+    cur.execute(<span class="str">"SET ROLE demo_pii_user;"</span>)        <span class="com"># or demo_masked_user</span>
+    cur.execute(<span class="str">"SELECT * FROM my_app.customers_full;"</span>)
+    print(cur.fetchall())</pre>
+
+      <h3>Sample output — same row, different roles</h3>
+      <div class="out">
+        <div class="label">role <b>pii_full_access</b> reading <code>my_app.customers_full</code></div>
+        <span class="plain">1 | Alice | alice@acme.com | 123-45-6789 | 4111111111111111</span>
+      </div>
+      <div class="out">
+        <div class="label">role <b>pii_masked</b> reading <code>my_app.customers_masked</code></div>
+        <span class="masked">1 | Alice | a***@acme.com | XXX-XX-6789 | ************1111</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== BENEFITS ============== -->
+  <h2 style="font-size:10.5pt;color:#111827;margin:8px 0 4px 0;padding-bottom:3px;border-bottom:1px solid #e5e7eb">Why this is different from encryption-at-rest</h2>
+  <table class="compact">
+    <thead><tr><th style="width:30%">Threat</th><th>Encryption at rest</th><th>Field-level encryption + masking</th></tr></thead>
+    <tbody>
+      <tr><td>Stolen backup / disk image</td><td><span class="badge green">Protected</span></td><td><span class="badge green">Protected</span></td></tr>
+      <tr><td>Compromised app credential</td><td><span class="badge red">Plaintext exposed</span></td><td><span class="badge green">Mask or NULL only</span></td></tr>
+      <tr><td>DBA reading rows</td><td><span class="badge red">Plaintext exposed</span></td><td><span class="badge green">Sees ciphertext only</span></td></tr>
+      <tr><td>Customer-facing app role compromised</td><td><span class="badge red">Plaintext exposed</span></td><td><span class="badge green">Masked values only</span></td></tr>
+      <tr><td>Key rotation</td><td><span class="badge">Re-encrypts whole volume</span></td><td><span class="badge green">One UPDATE re-encrypts rows in place</span></td></tr>
+      <tr><td>Audit granularity</td><td><span class="badge">Per-disk</span></td><td><span class="badge green">Per-column · per-role · per-call</span></td></tr>
+    </tbody>
+  </table>
+
+  <!-- ============== FOOTER ============== -->
+  <div class="footer">
+    <div>
+      <b>Requirements:</b> Lakebase Autoscaling (PG 16/17) · <code>pgcrypto</code> (already on Lakebase's allowlist) · Databricks Secret Scope backed by Azure Key Vault / AWS KMS / GCP KMS.
+    </div>
+  </div>
+  <div class="footer">
+    <div class="links">
+      Full repo (SQL · Python demo · diagrams): <a href="https://github.com/nan-databricks/lakebase-field-level-encryption">github.com/nan-databricks/lakebase-field-level-encryption</a>
+    </div>
+    <div>Reference pattern · Field Engineering · Databricks</div>
+  </div>
+
+</body>
+</html>
