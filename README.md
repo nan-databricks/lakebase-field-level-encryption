@@ -2,7 +2,7 @@
 
 > Column-level encryption + dynamic masking on **Databricks Lakebase** (managed Postgres) using `pgcrypto` and a **customer-managed key (CMK)** from Azure Key Vault / AWS KMS / GCP KMS.
 
-![Architecture](blog/images/architecture.png)
+![Architecture](blog/images/architecture.png?v=2)
 
 ## What this is
 
@@ -18,7 +18,7 @@ It's the "second layer" on top of platform encryption-at-rest. See [the blog pos
 
 ## Same row, two roles, two views
 
-![Privileged vs masked output](blog/images/comparison.png)
+![Privileged vs masked output](blog/images/comparison.png?v=2)
 
 ## Repo layout
 
@@ -79,11 +79,11 @@ The script:
 
 ## Bypass attempts — all blocked
 
-![Bypass attempts](blog/images/bypass.png)
+![Bypass attempts](blog/images/bypass.png?v=2)
 
 ## How it differs from encryption-at-rest
 
-![Encryption at rest vs column-level encryption](blog/images/at_rest_vs_column.png)
+![Encryption at rest vs column-level encryption](blog/images/at_rest_vs_column.png?v=2)
 
 | Threat | Encryption at rest | Column-level encryption + masking |
 |---|---|---|
