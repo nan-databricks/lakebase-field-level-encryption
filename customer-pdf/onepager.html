@@ -22,6 +22,7 @@
   .brand .title { font-size: 18pt; font-weight: 700; color: #111827; margin-top: 4px; }
   .brand .right { font-size: 8.5pt; color: #6b7280; text-align: right; line-height: 1.5; }
   .brand .right b { color: #111827; }
+  .brand .meta { font-size: 7.5pt; color: #6b7280; margin-top: 4px; }
 
   /* ------- intro ------- */
   .lede {
@@ -68,6 +69,19 @@
   pre .fn  { color: #d2a8ff; }
   code { font-family: 'JetBrains Mono', monospace; font-size: 9pt; background: #f3f4f6; padding: 1px 5px; border-radius: 3px; }
 
+  /* ------- note / callout ------- */
+  .note {
+    background: #eff6ff;
+    border-left: 3px solid #2563eb;
+    padding: 10px 14px;
+    margin: 8px 0 14px 0;
+    font-size: 9pt;
+    border-radius: 0 4px 4px 0;
+  }
+  .note .label { font-weight: 700; color: #1e3a8a; text-transform: uppercase; font-size: 7.5pt; letter-spacing: 0.05em; margin-bottom: 4px; display: block; }
+  .note p { margin: 4px 0; }
+  .note code { background: #dbeafe; }
+
   /* ------- output box ------- */
   .out {
     border: 1px solid #e5e7eb; border-radius: 4px;
@@ -98,6 +112,7 @@
     <div class="left">
       <div class="product">Databricks Lakebase · Reference Pattern</div>
       <div class="title">Field-Level Encryption &amp; Dynamic Masking</div>
+      <div class="meta">Author: Nan Chulpaibul · Field Engineering, Databricks &nbsp;·&nbsp; Date: May 2026 &nbsp;·&nbsp; Version: 1.0</div>
     </div>
     <div class="right">
       <b>Use case:</b> Protect PII in OLTP Postgres<br>
@@ -124,22 +139,25 @@
   <h2>How it works (in order)</h2>
   <ol>
     <li>The <b>customer-managed key (CMK)</b> is stored in <b>Azure Key Vault</b> (or AWS / GCP KMS) and surfaced to Databricks via an AKV-backed Secret Scope. Every key access is audited.</li>
-    <li>A <b>Databricks App</b> reads the CMK once when it opens a Postgres connection, and injects it into the session via <code>SELECT set_config('app.cmk', ...)</code>. The CMK lives only in that connection's session memory; it is never persisted in Postgres.</li>
+    <li>The CMK is injected into the Postgres session via <code>SELECT set_config('app.cmk', '...');</code>. The CMK lives only in that connection's session memory; it is never persisted in Postgres.</li>
     <li>PII columns in the base table are stored as <b>bytea ciphertext</b>, encrypted with <code>pgp_sym_encrypt(plaintext, cmk)</code>.</li>
-    <li>Two <b>SECURITY DEFINER</b> functions decrypt: <code>vault.decrypt_full</code> returns plaintext, <code>vault.decrypt_masked</code> returns an already-masked string. Each is granted to a single Postgres role.</li>
-    <li>Two role-specific <b>views</b> wire each role to its decrypt path: <code>customers_full</code> for <code>pii_full_access</code>, <code>customers_masked</code> for <code>pii_masked</code>. Apps query the view their role can see.</li>
+    <li>Two <b>SECURITY DEFINER</b> functions decrypt: <code>my_vault.decrypt_full</code> returns plaintext, <code>my_vault.decrypt_masked</code> returns an already-masked string. Each is granted to a single Postgres role.</li>
+    <li>Two role-specific <b>views</b> wire each role to its decrypt path: <code>customers_full</code> for <code>pii_full_access</code>, <code>customers_masked</code> for <code>pii_masked</code>. Consumers query the view their role can see.</li>
   </ol>
 
+  <h2>Try it: paste these SQL blocks into the Lakebase SQL Editor</h2>
+  <p>The blocks below run end-to-end in the Lakebase SQL Editor. Run them top-to-bottom as the project owner. Each block is idempotent — safe to re-run.</p>
+
   <!-- ============== STEP 1 ============== -->
-  <h2>Step 1 — Enable <code>pgcrypto</code> and create schemas</h2>
-  <p>Run once in the Lakebase SQL Editor as the project owner. The only Postgres extension required is <code>pgcrypto</code>, which is on Lakebase's allowlist by default.</p>
+  <h3>Step 1 — Enable <code>pgcrypto</code> and create schemas</h3>
+  <p>The only Postgres extension required is <code>pgcrypto</code>, which is on Lakebase's allowlist by default.</p>
 <pre><span class="kw">CREATE EXTENSION IF NOT EXISTS</span> pgcrypto;
 <span class="kw">CREATE SCHEMA IF NOT EXISTS</span> my_vault;   <span class="com">-- holds the decrypt functions</span>
 <span class="kw">CREATE SCHEMA IF NOT EXISTS</span> my_app;     <span class="com">-- holds the encrypted table + views</span></pre>
 
   <!-- ============== STEP 2 ============== -->
-  <h2>Step 2 — Create the two decrypt functions</h2>
-  <p>Both functions read the CMK from <code>current_setting('app.cmk')</code>, which the application sets per session. Marking them <code>SECURITY DEFINER</code> lets them be ACL-gated independently from access to the underlying table.</p>
+  <h3>Step 2 — Create the two decrypt functions</h3>
+  <p>Both functions read the CMK from <code>current_setting('app.cmk')</code>. Marking them <code>SECURITY DEFINER</code> lets them be ACL-gated independently from access to the underlying table.</p>
 <pre><span class="kw">CREATE OR REPLACE FUNCTION</span> my_vault.<span class="fn">decrypt_full</span>(p_ct <span class="kw">bytea</span>)
 <span class="kw">RETURNS</span> text
 <span class="kw">LANGUAGE</span> plpgsql <span class="kw">SECURITY DEFINER STABLE AS</span> $$
@@ -162,7 +180,7 @@
 <span class="kw">END</span>; $$;</pre>
 
   <!-- ============== STEP 3 ============== -->
-  <h2>Step 3 — Create roles and ACLs</h2>
+  <h3>Step 3 — Create roles and ACLs</h3>
   <p>Each role can call exactly one decrypt path. Neither role can read the CMK directly because <code>SECURITY DEFINER</code> means the function runs with the owner's privileges.</p>
 <pre><span class="kw">CREATE ROLE</span> pii_full_access;
 <span class="kw">CREATE ROLE</span> pii_masked;
@@ -174,28 +192,19 @@
 <span class="kw">GRANT EXECUTE ON FUNCTION</span> my_vault.<span class="fn">decrypt_masked</span>(<span class="kw">bytea</span>, text)  <span class="kw">TO</span> pii_masked;</pre>
 
   <!-- ============== STEP 4 ============== -->
-  <h2>Step 4 — Create the encrypted base table</h2>
-  <p>PII columns are <code>bytea</code>. The plaintext never lands in the column. Insert by encrypting with the session CMK.</p>
+  <h3>Step 4 — Create the encrypted base table</h3>
+  <p>PII columns are <code>bytea</code>. The plaintext never lands in the column.</p>
 <pre><span class="kw">CREATE TABLE</span> my_app.customers (
   id              <span class="kw">bigserial PRIMARY KEY</span>,
   full_name       text,
   email_enc       <span class="kw">bytea NOT NULL</span>,
   ssn_enc         <span class="kw">bytea NOT NULL</span>,
   card_number_enc <span class="kw">bytea NOT NULL</span>
-);
-
-<span class="com">-- Insert: encrypt with the session CMK (set by the app at connect time)</span>
-<span class="kw">INSERT INTO</span> my_app.customers(full_name, email_enc, ssn_enc, card_number_enc)
-<span class="kw">VALUES</span> (
-  <span class="str">'Alice Anderson'</span>,
-  <span class="fn">pgp_sym_encrypt</span>(<span class="str">'alice@acme.com'</span>,    current_setting(<span class="str">'app.cmk'</span>)),
-  <span class="fn">pgp_sym_encrypt</span>(<span class="str">'123-45-6789'</span>,       current_setting(<span class="str">'app.cmk'</span>)),
-  <span class="fn">pgp_sym_encrypt</span>(<span class="str">'4111111111111111'</span>,  current_setting(<span class="str">'app.cmk'</span>))
 );</pre>
 
   <!-- ============== STEP 5 ============== -->
-  <h2>Step 5 — Create the role-specific views</h2>
-  <p>Two views, one per role. Each calls exactly one decrypt function so the planner-level permission check is also enforced.</p>
+  <h3>Step 5 — Create the role-specific views</h3>
+  <p>Two views, one per role. Each calls exactly one decrypt function so Postgres' planner-level permission check is also enforced.</p>
 <pre><span class="kw">CREATE VIEW</span> my_app.customers_full <span class="kw">AS</span>
 <span class="kw">SELECT</span> id, full_name,
        my_vault.<span class="fn">decrypt_full</span>(email_enc)        <span class="kw">AS</span> email,
@@ -214,35 +223,53 @@
 <span class="kw">GRANT SELECT ON</span> my_app.customers_masked <span class="kw">TO</span> pii_masked;</pre>
 
   <!-- ============== STEP 6 ============== -->
-  <h2>Step 6 — Application bootstrap (Python · Databricks App)</h2>
-  <p>The app fetches the CMK from Azure Key Vault via the Databricks Secret Scope, gets a Lakebase OAuth token, opens a connection, sets the session-local CMK, and queries the appropriate view.</p>
-<pre><span class="kw">import</span> psycopg
-<span class="kw">from</span> databricks.sdk <span class="kw">import</span> WorkspaceClient
+  <h3>Step 6 — Set the CMK, insert sample data, query both views</h3>
+  <p>For the SQL Editor demo, set the CMK manually via <code>set_config</code> (session-local — it disappears when the tab closes). Then insert a few rows and read them through each view.</p>
+<pre><span class="com">-- 6a. Set the CMK for THIS session only (replace with a strong value)</span>
+<span class="kw">SELECT</span> <span class="fn">set_config</span>(<span class="str">'app.cmk'</span>, <span class="str">'demo-cmk-replace-with-akv-secret-2026-05'</span>, <span class="kw">false</span>);
 
-w   = WorkspaceClient()
-cmk = w.dbutils.secrets.get(scope=<span class="str">"lakebase-cmk"</span>, key=<span class="str">"lakebase-cmk"</span>)
+<span class="com">-- 6b. Insert encrypted rows using the session CMK</span>
+<span class="kw">INSERT INTO</span> my_app.customers(full_name, email_enc, ssn_enc, card_number_enc) <span class="kw">VALUES</span>
+  (<span class="str">'Alice Anderson'</span>,
+   <span class="fn">pgp_sym_encrypt</span>(<span class="str">'alice@acme.com'</span>,    current_setting(<span class="str">'app.cmk'</span>)),
+   <span class="fn">pgp_sym_encrypt</span>(<span class="str">'123-45-6789'</span>,       current_setting(<span class="str">'app.cmk'</span>)),
+   <span class="fn">pgp_sym_encrypt</span>(<span class="str">'4111111111111111'</span>,  current_setting(<span class="str">'app.cmk'</span>))),
+  (<span class="str">'Bob Brown'</span>,
+   <span class="fn">pgp_sym_encrypt</span>(<span class="str">'bob@globex.com'</span>,    current_setting(<span class="str">'app.cmk'</span>)),
+   <span class="fn">pgp_sym_encrypt</span>(<span class="str">'987-65-4321'</span>,       current_setting(<span class="str">'app.cmk'</span>)),
+   <span class="fn">pgp_sym_encrypt</span>(<span class="str">'5500000000000004'</span>,  current_setting(<span class="str">'app.cmk'</span>)));
 
-ep  = w.postgres.get_endpoint(name=<span class="str">"projects/&lt;project&gt;/branches/production/endpoints/primary"</span>)
-tok = w.postgres.generate_database_credential(endpoint=ep.name).token
+<span class="com">-- 6c. Read as the privileged role -> plaintext</span>
+<span class="kw">SET ROLE</span> pii_full_access;
+<span class="kw">SELECT</span> * <span class="kw">FROM</span> my_app.customers_full <span class="kw">ORDER BY</span> id;
+<span class="kw">RESET ROLE</span>;
 
-<span class="kw">with</span> psycopg.connect(
-        host=ep.status.hosts.host, dbname=<span class="str">"databricks_postgres"</span>,
-        user=w.current_user.me().user_name, password=tok, sslmode=<span class="str">"require"</span>) <span class="kw">as</span> c, c.cursor() <span class="kw">as</span> cur:
+<span class="com">-- 6d. Read as the masked role -> redacted</span>
+<span class="kw">SET ROLE</span> pii_masked;
+<span class="kw">SELECT</span> * <span class="kw">FROM</span> my_app.customers_masked <span class="kw">ORDER BY</span> id;
+<span class="kw">RESET ROLE</span>;</pre>
 
-    cur.execute(<span class="str">"SELECT set_config('app.cmk', %s, false);"</span>, (cmk,))   <span class="com"># session-local</span>
-    cur.execute(<span class="str">"SET ROLE demo_pii_user;"</span>)                            <span class="com"># or demo_masked_user</span>
-    cur.execute(<span class="str">"SELECT * FROM my_app.customers_full;"</span>)
-    print(cur.fetchall())</pre>
+  <div class="note">
+    <span class="label">Note — From SQL Editor demo to production app</span>
+    <p>In the SQL Editor demo above, <code>set_config('app.cmk', '...')</code> is called manually. <b>In production, this is done automatically by the consuming Databricks App at connection time</b>:</p>
+    <ol style="margin-left:18px;margin-top:4px;margin-bottom:4px">
+      <li>The app authenticates to Databricks and reads the CMK from <b>Azure Key Vault</b> (or AWS / GCP KMS) via a Databricks Secret Scope — every read is audited.</li>
+      <li>The app opens a Lakebase Postgres connection and immediately runs <code>SELECT set_config('app.cmk', :cmk, false);</code>.</li>
+      <li>All subsequent queries in that session decrypt seamlessly. The CMK is never persisted in Postgres and never appears in <code>pg_stat_statements</code>.</li>
+    </ol>
+    <p>This means the same SQL above works unchanged from a customer 360 microservice, an internal fraud console, or a scheduled job — only the CMK source changes from a hardcoded demo value to an AKV / KMS lookup.</p>
+  </div>
 
-  <!-- ============== OUTPUT ============== -->
-  <h2>Sample output — same row, different roles</h2>
+  <h2>Expected output — same row, different roles</h2>
   <div class="out">
-    <div class="label">Role <b>pii_full_access</b> reading <code>my_app.customers_full</code></div>
-    <span class="plain">1 | Alice Anderson | alice@acme.com | 123-45-6789 | 4111111111111111</span>
+    <div class="label">Step 6c · role <b>pii_full_access</b> reading <code>my_app.customers_full</code></div>
+    <span class="plain">1 | Alice Anderson | alice@acme.com | 123-45-6789 | 4111111111111111</span><br>
+    <span class="plain">2 | Bob Brown      | bob@globex.com | 987-65-4321 | 5500000000000004</span>
   </div>
   <div class="out">
-    <div class="label">Role <b>pii_masked</b> reading <code>my_app.customers_masked</code></div>
-    <span class="masked">1 | Alice Anderson | a***@acme.com | XXX-XX-6789 | ************1111</span>
+    <div class="label">Step 6d · role <b>pii_masked</b> reading <code>my_app.customers_masked</code></div>
+    <span class="masked">1 | Alice Anderson | a***@acme.com  | XXX-XX-6789 | ************1111</span><br>
+    <span class="masked">2 | Bob Brown      | b***@globex.com | XXX-XX-4321 | ************0004</span>
   </div>
 
   <!-- ============== FOOTER ============== -->
