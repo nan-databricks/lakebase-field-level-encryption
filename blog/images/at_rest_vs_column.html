@@ -100,7 +100,7 @@
         <tr><td>Stolen backup / disk image</td><td class="yes">Protected</td><td class="yes">Protected</td></tr>
         <tr><td>Compromised application credential</td><td class="no">Plaintext exposed</td><td class="partial">Only the role's view is exposed (mask or null)</td></tr>
         <tr><td>Curious DBA reading rows</td><td class="no">Plaintext exposed</td><td class="yes">Sees ciphertext only</td></tr>
-        <tr><td>Insider exporting data via BI tool</td><td class="no">Plaintext exposed</td><td class="yes">BI role gets masked values</td></tr>
+        <tr><td>Customer-facing app role compromised</td><td class="no">Plaintext exposed</td><td class="yes">App's role gets masked values only</td></tr>
         <tr><td>Audit / least-privilege controls</td><td class="no">Per-disk, not per-column</td><td class="yes">Per-column, per-role, per-strategy</td></tr>
         <tr><td>Key rotation</td><td class="partial">Re-encrypts the volume</td><td class="yes">In-place row-level re-encrypt in one UPDATE</td></tr>
       </tbody>

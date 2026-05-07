@@ -59,7 +59,7 @@ It's the "second layer" on top of platform encryption-at-rest. See [the blog pos
    SELECT * FROM my_app.customers_masked;   -- a***@acme.com, XXX-XX-6789, ...
    ```
 
-### Option B — automated end-to-end demo from a notebook or CLI
+### Option B — automated end-to-end demo from a Databricks App or CLI
 
 ```bash
 pip install -r requirements.txt
@@ -90,7 +90,7 @@ The script:
 | Stolen backup / disk image | Protected | Protected |
 | Compromised application credential | Plaintext exposed | Only the role's view (mask or null) |
 | Curious DBA reading rows | Plaintext exposed | Sees ciphertext only |
-| Insider exporting data via BI tool | Plaintext exposed | BI role gets masked values |
+| Customer-facing app role compromised | Plaintext exposed | App's role gets masked values only |
 | Audit / least-privilege controls | Per-disk, not per-column | Per-column, per-role, per-strategy |
 | Key rotation | Re-encrypts the volume | In-place row-level re-encrypt in one `UPDATE` |
 
@@ -125,7 +125,9 @@ with psycopg.connect(
     print(cur.fetchall())
 ```
 
-For BI tools that can't run a Python bootstrap, use a tiny scheduled Databricks Job to push the CMK into a locked-down `vault.keys` table (the variant in `scripts/cmk_column_masking_demo.py`).
+For ad-hoc SQL Editor / break-glass access where a Python bootstrap isn't available, use a tiny scheduled Databricks Job to push the CMK into a locked-down `vault.keys` table (the variant in `scripts/cmk_column_masking_demo.py`).
+
+> **Note on consumers.** Lakebase is OLTP. The clients of these masking views are **Databricks Apps**, microservices, and operational backends — *not* BI tools. For analytics on the same data, sync the *masked* view to Delta via Lakeflow Connect Postgres ingestion and apply Unity Catalog column masks on the Lakehouse side.
 
 ## Requirements
 

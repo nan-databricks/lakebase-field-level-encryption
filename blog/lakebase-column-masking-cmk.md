@@ -8,15 +8,16 @@
 
 ## The objective
 
-You've spun up [Lakebase](https://docs.databricks.com/aws/en/oltp/), Databricks' managed Postgres, to power an operational app — maybe a credit-decisioning service, a customer 360 lookup, or an account-status dashboard. The table holds emails, SSNs, card numbers. Three classes of people now want to read it:
+You've spun up [Lakebase](https://docs.databricks.com/aws/en/oltp/), Databricks' managed Postgres, to power an operational application — maybe a credit-decisioning service, a customer 360 lookup, or an account-status microservice. The table holds emails, SSNs, card numbers. Two operational apps now read from it:
 
-1. **A fraud analyst** who legitimately needs the full PII to investigate cases.
-2. **A support agent** who only needs the last four digits of an SSN to verify a caller.
-3. **A BI dashboard** that shows aggregate signups per region and shouldn't see the email at all.
+1. **A fraud console** used by internal analysts who legitimately need the full PII to investigate cases.
+2. **A customer 360 / support app** where the agent only needs the last four digits of an SSN to verify a caller.
 
-Your platform team already enabled storage-level encryption with a customer-managed key — the disk is encrypted. So you're done, right?
+Both apps run as Databricks Apps with their own service principals. Both query the same `customers` table. Your platform team already enabled storage-level encryption with a customer-managed key — the disk is encrypted. So you're done, right?
 
-No. Encryption-at-rest only protects you against one specific attacker (the one who steals the disk). The three personas above all log in as legitimate users and run `SELECT *`. To them, the disk-level encryption is invisible.
+No. Encryption-at-rest only protects you against one specific attacker (the one who steals the disk). Both apps above log in as legitimate users and run `SELECT *`. To them, the disk-level encryption is invisible — and a leaked credential or compromised app instance gives the attacker exactly the same view.
+
+(Side note: this is an OLTP problem. If you also need analytics on this data, that lives in the Lakehouse — sync the *masked* view to Delta and apply Unity Catalog column masks there. Lakebase is for operational apps; Power BI / Tableau should not point at it.)
 
 This post is about adding the second layer: **column-level encryption with dynamic masking**, so the same row in the same table looks completely different depending on who's reading.
 
@@ -28,9 +29,9 @@ This post is about adding the second layer: **column-level encryption with dynam
 
 Encryption-at-rest is a **storage-tier** control. The database engine still sees plaintext. Anyone who authenticates and runs `SELECT` gets cleartext rows back. It's a perfectly good control for the threat it targets — disk theft, snapshot exfiltration, backup leakage — but it does nothing for:
 
-- A compromised app credential
+- A compromised app credential or service principal
 - An overprivileged engineer querying via the SQL editor
-- A BI tool that legitimately connects with a service account but exposes data to thousands of viewers
+- An internal microservice that legitimately connects with a service account but is breached
 - A `pg_dump` accidentally posted to an internal wiki
 
 **Column-level encryption** is an **application-tier** control. The PII columns in your table are *bytea ciphertext on disk and in memory*. Plaintext only exists for the moment a privileged role calls a decrypt function — and even then, only for that role. You can layer a *masked* decrypt path so other roles see redacted strings. The result:
@@ -49,9 +50,9 @@ You want **both layers**. They don't replace each other; they protect different 
 The pattern has four moving parts:
 
 1. **The CMK** lives in **Azure Key Vault** (or AWS KMS / GCP KMS).
-2. **A Databricks Secret Scope**, backed by AKV, surfaces the CMK to authorized notebooks/apps with a single API call. Every read is audited in Azure Monitor *and* Databricks audit logs.
+2. **A Databricks Secret Scope**, backed by AKV, surfaces the CMK to authorized Databricks Apps with a single API call. Every read is audited in Azure Monitor *and* Databricks audit logs.
 3. **Lakebase Postgres** holds the table with PII as `bytea` ciphertext, plus two `SECURITY DEFINER` functions that decrypt — one returns plaintext, one returns *already-masked* strings. ACLs decide who can call which.
-4. **The application** reads the CMK once at session start, injects it into Postgres via a session-local GUC variable, then queries the appropriate view. The CMK never persists in Postgres.
+4. **Each Databricks App** authenticates as a different Postgres role: the Fraud Console as `pii_full_access`, the Customer 360 App as `pii_masked`. They both read the CMK once at session start, inject it into Postgres via a session-local GUC variable, then query their assigned view. The CMK never persists in Postgres.
 
 The key never crosses a role boundary inside the database. The plaintext never leaves the decrypt function for masked users. Both `pii_full_access` and `pii_masked` see *the same row* through different windows.
 
@@ -79,7 +80,7 @@ databricks secrets create-scope lakebase-cmk \
     --dns-name "https://my-customer-kv.vault.azure.net/"
 ```
 
-Now any notebook, job, or Databricks App can fetch the key with `dbutils.secrets.get(...)` — and Databricks records it in the audit log.
+Now any Databricks App or job can fetch the key with `dbutils.secrets.get(...)` — and Databricks records it in the audit log.
 
 ### Step 3 — Build the encryption + masking layer in Lakebase
 
@@ -197,7 +198,7 @@ The CMK lives in:
 - **The app's connection's session memory** — for the lifetime of the connection only.
 - **Never on disk in Postgres.** Never in pg_stat_statements (use `set_config` not `SET app.cmk = '...'`).
 
-If your customer-facing tooling is BI/SQL-only and can't run a Python bootstrap, swap step 4 for a tiny scheduled Databricks Job that fetches the CMK from AKV nightly and writes it into a `vault.keys` table that you lock down with `REVOKE ALL FROM PUBLIC`. The decrypt functions then read from that table instead of the GUC. Slightly more attack surface, much friendlier for analysts.
+If you have ad-hoc SQL Editor users who need access without running a Python bootstrap, swap step 4 for a tiny scheduled Databricks Job that fetches the CMK from AKV nightly and writes it into a `vault.keys` table locked down with `REVOKE ALL FROM PUBLIC`. The decrypt functions then read from that table instead of the GUC. Slightly more attack surface, much friendlier for break-glass / debugging access.
 
 ---
 
@@ -250,12 +251,12 @@ Then update the AKV secret to the new value. New sessions transparently pick up 
 |---|---|
 | **Compromised credentials don't leak plaintext** | A leaked password for `demo_masked_user` only exposes masked values. No SSN. No full card. |
 | **Internal threat resistance** | DBAs, SREs, and platform engineers reading rows directly see only `bytea`. Without the CMK they have no path to plaintext. |
-| **BI tools become safe consumers** | Point Power BI / Tableau at `customers_masked` with a service account in `pii_masked`. Dashboards show `a***@acme.com` and `XXX-XX-1234`. No more "BI dashboard accidentally exposes 50K SSNs" headlines. |
+| **Customer-facing apps become safe consumers** | Run your customer 360 / support / partner-portal app as a service principal in `pii_masked`. Even a full app compromise only leaks `a***@acme.com` and `XXX-XX-1234`. The apps that *do* see plaintext (fraud console, internal investigations) are much smaller, easier to audit, and run under tighter network controls. |
 | **Per-column, per-role audit** | Postgres logs every `decrypt_full` call. Combined with Databricks audit on the AKV secret read, you get a complete chain: *"At 14:02, app X read the CMK; at 14:03, role Y decrypted 47 emails."* |
 | **The CMK is yours, not Databricks'** | Stored in your AKV. Databricks never persists it. You can rotate, revoke, or expire it without involving anyone. |
 | **One-statement key rotation** | No table downtime. No re-export/import. Just one `UPDATE` per rotation. |
 | **Lakebase-native, no extra services** | Pure `pgcrypto` (already on Lakebase's [supported extensions list](https://docs.databricks.com/aws/en/oltp/projects/extensions)) + standard Postgres roles. No sidecar service, no separate KMS proxy. |
-| **Composes with Lakehouse governance** | If you sync the masked view to Delta via Lakeflow Connect Postgres ingestion, the *masked* values land in the Lakehouse — you can apply UC column masks on top for a second layer of governance on the analytics side. |
+| **Composes with Lakehouse governance** | Lakebase is OLTP — keep BI on the Lakehouse side. If you sync the masked view to Delta via Lakeflow Connect Postgres ingestion, the *masked* values land in Unity Catalog and analysts query them through Power BI / Tableau / SQL warehouses. Apply UC column masks on top for a second layer of governance on the analytics side. |
 
 ---
 
